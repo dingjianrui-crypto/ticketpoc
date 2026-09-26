@@ -18,10 +18,11 @@ export const page = `<!doctype html>
     .tab[aria-selected="true"] { color: #a64300; background: #fff0e3; }
     .panel { padding: clamp(20px, 4vw, 36px); }
     .panel[hidden] { display: none; }
-    form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 16px; align-items: end; }
+    form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) auto; gap: 16px; align-items: end; }
     label { display: grid; gap: 7px; color: #465063; font-size: .875rem; font-weight: 700; }
-    input { width: 100%; border: 1px solid #cbd2dd; border-radius: 9px; padding: 11px 12px; font: inherit; }
-    input:focus { outline: 3px solid #fbd7bc; border-color: #d8610b; }
+    input, select { width: 100%; border: 1px solid #cbd2dd; border-radius: 9px; padding: 11px 12px; color: inherit; background: white; font: inherit; }
+    input:focus, select:focus { outline: 3px solid #fbd7bc; border-color: #d8610b; }
+    [data-mode="r2"] { grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(190px, auto) auto; }
     .action { border: 0; border-radius: 9px; padding: 12px 22px; color: #fff; background: #d95f08; font: inherit; font-weight: 750; cursor: pointer; }
     .action:disabled { opacity: .55; cursor: wait; }
     .diagnostic-action { border: 1px solid #cbd2dd; border-radius: 7px; padding: 6px 10px; color: #465063; background: white; font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer; }
@@ -80,6 +81,12 @@ export const page = `<!doctype html>
       <form data-mode="r2">
         <label>User ID<input name="userId" maxlength="128" required autocomplete="off"></label>
         <label>Ticket ID<input name="ticketId" maxlength="128" required autocomplete="off"></label>
+        <label>Cache behavior
+          <select name="cacheBehavior">
+            <option value="default">Default (shared cache, 4h)</option>
+            <option value="no-store">No store</option>
+          </select>
+        </label>
         <button class="action" type="submit">Generate</button>
       </form>
       <p class="error" role="alert"></p>
@@ -217,10 +224,12 @@ export const page = `<!doctype html>
     try {
       const data = new FormData(form);
       const mode = form.dataset.mode;
+      const requestBody = { userId: data.get('userId'), ticketId: data.get('ticketId') };
+      if (mode === 'r2') requestBody.cacheBehavior = data.get('cacheBehavior');
       const response = await fetch(mode === 'edge' ? '/api/svg-tickets' : '/api/r2-tickets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: data.get('userId'), ticketId: data.get('ticketId') }),
+        body: JSON.stringify(requestBody),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Request failed.');
@@ -229,7 +238,10 @@ export const page = `<!doctype html>
       link.href = body.imageUrl;
       link.textContent = body.imageUrl;
       const object = panel.querySelector('[data-object]');
-      if (object) object.textContent = body.objectKey + (body.created ? ' (created)' : ' (already existed)');
+      if (object) {
+        const state = body.created ? 'created' : body.metadataUpdated ? 'cache metadata updated' : 'already existed';
+        object.textContent = body.objectKey + ' (' + state + ')';
+      }
       const image = panel.querySelector('[data-preview]');
       result.classList.add('visible');
       if (mode === 'r2') {

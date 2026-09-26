@@ -87,6 +87,34 @@ describe("ticket APIs", () => {
     expect((await second.json<{ created: boolean }>()).created).toBe(false);
   });
 
+  it("switches an existing R2 JPEG between shared-cache and no-store metadata", async () => {
+    const request = (cacheBehavior: "default" | "no-store") => SELF.fetch("https://app.example/api/r2-tickets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, cacheBehavior }),
+    });
+
+    const noStoreResponse = await request("no-store");
+    const noStore = await noStoreResponse.json<{ objectKey: string; cacheControl: string; metadataUpdated: boolean }>();
+    expect(noStore.cacheControl).toBe("no-store");
+    expect((await env.TICKET_BUCKET.head(noStore.objectKey))?.httpMetadata?.cacheControl).toBe("no-store");
+
+    const defaultResponse = await request("default");
+    const restored = await defaultResponse.json<{ cacheControl: string; metadataUpdated: boolean }>();
+    expect(restored.metadataUpdated).toBe(true);
+    expect(restored.cacheControl).toContain("s-maxage=14400");
+    expect((await env.TICKET_BUCKET.head(noStore.objectKey))?.httpMetadata?.cacheControl).toContain("s-maxage=14400");
+  });
+
+  it("rejects unsupported R2 cache behavior values", async () => {
+    const response = await SELF.fetch("https://app.example/api/r2-tickets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, cacheBehavior: "invalid" }),
+    });
+    expect(response.status).toBe(400);
+  });
+
   it("previews locally simulated R2 objects through a local-only route", async () => {
     const response = await SELF.fetch("http://localhost/api/r2-tickets", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),

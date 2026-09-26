@@ -16,6 +16,8 @@ const app = new Hono<{ Bindings: Bindings }>();
 const NO_STORE = { "Cache-Control": "no-store" };
 const DEFAULT_EDGE_TTL = 14_400;
 const DEFAULT_BROWSER_TTL = 0;
+const R2_CACHE_BEHAVIORS = ["default", "no-store"] as const;
+type R2CacheBehavior = (typeof R2_CACHE_BEHAVIORS)[number];
 
 function cacheControl(env: Bindings): string {
   const browser = positiveInt(env.BROWSER_CACHE_TTL_SECONDS, DEFAULT_BROWSER_TTL);
@@ -42,6 +44,12 @@ async function parseIdentity(request: Request, env: Bindings) {
     throw new InputError("Request body must be valid JSON.");
   }
   return createTicketIdentity(validateTicketInput(body), env.TICKET_HMAC_SECRET);
+}
+
+function r2CacheBehavior(value: unknown): R2CacheBehavior {
+  if (value === undefined || value === "default") return "default";
+  if (value === "no-store") return value;
+  throw new InputError(`Cache behavior must be one of: ${R2_CACHE_BEHAVIORS.join(", ")}.`);
 }
 
 app.onError((error, c) => {
@@ -101,17 +109,21 @@ app.get("/tickets/edge/v2/:barcodeId", async (c) => {
 
 app.post("/api/r2-tickets", async (c) => {
   if (!c.env.TICKET_BUCKET) throw new Error("TICKET_BUCKET binding is not configured.");
+  const requestBody: Record<string, unknown> = await c.req.raw.clone().json<Record<string, unknown>>().catch(() => ({}));
   const { barcodeId } = await parseIdentity(c.req.raw, c.env);
+  const cacheBehavior = r2CacheBehavior(requestBody.cacheBehavior);
+  const selectedCacheControl = cacheBehavior === "no-store" ? "no-store" : cacheControl(c.env);
   const key = objectKey(c.env.R2_OBJECT_PREFIX, barcodeId);
   const existing = await c.env.TICKET_BUCKET.head(key);
   let created = false;
+  const metadataUpdated = Boolean(existing && existing.httpMetadata?.cacheControl !== selectedCacheControl);
 
-  if (!existing) {
+  if (!existing || metadataUpdated) {
     const jpeg = barcodeJpeg(barcodeId);
     await c.env.TICKET_BUCKET.put(key, jpeg, {
       httpMetadata: {
         contentType: "image/jpeg",
-        cacheControl: cacheControl(c.env),
+        cacheControl: selectedCacheControl,
         contentDisposition: `inline; filename="${barcodeId}.jpg"`,
       },
       customMetadata: { barcodeId, formatVersion: "v2", barcodeFormat: "qr" },
@@ -123,7 +135,16 @@ app.post("/api/r2-tickets", async (c) => {
     ? new URL(`/local/r2-preview/${barcodeId}.jpg`, c.req.url).toString()
     : undefined;
   return c.json(
-    { barcodeId, imageUrl: publicObjectUrl(c.env.R2_PUBLIC_BASE_URL, key), previewUrl, objectKey: key, created },
+    {
+      barcodeId,
+      imageUrl: publicObjectUrl(c.env.R2_PUBLIC_BASE_URL, key),
+      previewUrl,
+      objectKey: key,
+      created,
+      metadataUpdated,
+      cacheBehavior,
+      cacheControl: selectedCacheControl,
+    },
     created ? 201 : 200,
     NO_STORE,
   );
