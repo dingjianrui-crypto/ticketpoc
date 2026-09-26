@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ticket-cache-poc",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-26",
+  "vars": {
+    "R2_PUBLIC_BASE_URL": "https://images.geoinsight.io",
+    "R2_OBJECT_PREFIX": "tickets",
+    "EDGE_CACHE_TTL_SECONDS": "14400",
+    "BROWSER_CACHE_TTL_SECONDS": "0"
+  },
+  "r2_buckets": [
+    {
+      "binding": "TICKET_BUCKET",
+      "bucket_name": "asiapacific"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
